@@ -1,0 +1,39 @@
+# ESP-IDF 工程通用忽略规则
+
+# 编译输出目录
+build/
+**/build/
+
+# 编译生成文件
+*.bin
+*.elf
+*.map
+*.a
+*.o
+*.d
+*.lst
+*.log
+
+
+# 编辑器/IDE 文件
+.vscode/
+.idea/
+*.swp
+*~
+*.swo
+
+# Python 缓存和虚拟环境
+__pycache__/
+*.pyc
+venv/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log
+log/
+
+# 测试相关
+test_results/
