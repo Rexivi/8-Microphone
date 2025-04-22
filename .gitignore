@@ -4,6 +4,9 @@
 build/
 **/build/
 
+.devcontainer/
+**/.devcontainer/
+
 # 编译生成文件
 *.bin
 *.elf

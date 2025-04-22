@@ -7,7 +7,7 @@ static TaskHandle_t audioTaskHandle = NULL;
 static TaskHandle_t fileTaskHandle = NULL;
 
 // 音频数据的N缓冲区系统（替代双缓冲区）
-#define NUM_BUFFERS 6  // 缓冲区数量(N) - 可调整
+#define NUM_BUFFERS 7  // 缓冲区数量(N) - 可调整
 
 typedef struct {
     SemaphoreHandle_t mutex[NUM_BUFFERS];
