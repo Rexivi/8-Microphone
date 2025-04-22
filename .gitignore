@@ -37,3 +37,5 @@ log/
 
 # 测试相关
 test_results/
+
+dependencies.lock

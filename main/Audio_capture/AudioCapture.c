@@ -2,19 +2,19 @@
 
 static const char *TAG = "AudioCapture";
 
-// Task handles
+// 任务句柄
 static TaskHandle_t audioTaskHandle = NULL;
 static TaskHandle_t fileTaskHandle = NULL;
 
-// N-buffer for audio data (replacing double buffer)
-#define NUM_BUFFERS 6  // Number of buffers (N) - can be adjusted
+// 音频数据的N缓冲区系统（替代双缓冲区）
+#define NUM_BUFFERS 6  // 缓冲区数量(N) - 可调整
 
 typedef struct {
     SemaphoreHandle_t mutex[NUM_BUFFERS];
     uint8_t *buffer[NUM_BUFFERS];
-    size_t size;        // Size of each buffer
-    int activeBuffer;   // Currently active buffer for writing
-    bool bufferReady[NUM_BUFFERS]; // Track which buffers are ready for saving
+    size_t size;        // 每个缓冲区的大小
+    int activeBuffer;   // 当前用于写入的活动缓冲区
+    bool bufferReady[NUM_BUFFERS]; // 跟踪哪些缓冲区准备好保存
 } AudioMultiBuffer;
 
 static AudioMultiBuffer audioBuffer = {
@@ -25,17 +25,17 @@ static AudioMultiBuffer audioBuffer = {
     .bufferReady = {false}
 };
 
-// Queue for communication between tasks
+// 用于任务间通信的队列
 static QueueHandle_t dataQueue = NULL;
 
-// File handle
+// 文件句柄
 static FILE *audioFile = NULL;
-static char currentFilePath[128] = {0}; // Buffer to store current file path
+static char currentFilePath[128] = {0}; // 存储当前文件路径的缓冲区
 
-// Task states
+// 任务状态
 static bool tasksRunning = false;
 
-// Function to generate a unique filename for each recording session
+// 为每个录制会话生成唯一文件名的函数
 static esp_err_t generate_audio_filename(char *file_path, size_t max_len) {
     DIR *dir;
     struct dirent *entry;
@@ -43,31 +43,31 @@ static esp_err_t generate_audio_filename(char *file_path, size_t max_len) {
     char pattern[32];
     int file_index;
     
-    // Ensure output buffer is valid
+    // 确保输出缓冲区有效
     if (file_path == NULL || max_len < 16) {
         return ESP_ERR_INVALID_ARG;
     }
     
-    // Open the directory
+    // 打开目录
     dir = opendir(AUDIO_FILE_DIR);
     if (dir == NULL) {
         ESP_LOGE(TAG, "Failed to open directory: %s", AUDIO_FILE_DIR);
-        // Default to Audio1.bin if directory can't be opened
+        // 如果目录无法打开，默认使用Audio1.bin
         snprintf(file_path, max_len, "%s/%s1%s", AUDIO_FILE_DIR, AUDIO_FILE_PREFIX, AUDIO_FILE_EXT);
         return ESP_ERR_NOT_FOUND;
     }
     
-    // Create pattern to match (e.g., "Audio")
+    // 创建匹配模式（例如，"Audio"）
     snprintf(pattern, sizeof(pattern), "%s", AUDIO_FILE_PREFIX);
     size_t pattern_len = strlen(pattern);
     
-    // Scan all files in the directory
+    // 扫描目录中的所有文件
     while ((entry = readdir(dir)) != NULL) {
-        // Check if file name matches our pattern
+        // 检查文件名是否匹配我们的模式
         if (strncmp(entry->d_name, pattern, pattern_len) == 0) {
-            // Try to extract the index number after the prefix
+            // 尝试提取前缀后的索引号
             if (sscanf(entry->d_name + pattern_len, "%d", &file_index) == 1) {
-                // If this index is higher than our current max, update max
+                // 如果这个索引比我们当前的最大值高，则更新最大值
                 if (file_index > max_index) {
                     max_index = file_index;
                 }
@@ -75,10 +75,10 @@ static esp_err_t generate_audio_filename(char *file_path, size_t max_len) {
         }
     }
     
-    // Close the directory
+    // 关闭目录
     closedir(dir);
     
-    // Create new filename with index one higher than max found
+    // 创建比找到的最大索引高一的新文件名
     snprintf(file_path, max_len, "%s/%s%d%s", 
              AUDIO_FILE_DIR, AUDIO_FILE_PREFIX, max_index + 1, AUDIO_FILE_EXT);
     
@@ -86,98 +86,98 @@ static esp_err_t generate_audio_filename(char *file_path, size_t max_len) {
     return ESP_OK;
 }
 
-// Audio data capture task
+// 音频数据捕获任务
 static void audio_capture_task(void *pvParameters) {
     size_t bytes_read;
     esp_err_t result;
-    size_t writePos = 0;  // Local write position for current buffer
+    size_t writePos = 0;  // 当前缓冲区的本地写入位置
     
     ESP_LOGI(TAG, "Audio capture task started");
     
     while (1) {
-        // Check if task should be suspended
+        // 检查任务是否应该暂停
         if (ulTaskNotifyTake(pdTRUE, 0)) {
-            // Notify received, suspend the task
+            // 收到通知，暂停任务
             ESP_LOGI(TAG, "Audio capture task going to suspend");
             vTaskSuspend(NULL);
             ESP_LOGI(TAG, "Audio capture task resumed");
             continue;
         }
         
-        // Try to find a free buffer
+        // 尝试找到一个空闲缓冲区
         bool bufferFound = false;
-        int startBuffer = audioBuffer.activeBuffer;  // Remember where we started searching
+        int startBuffer = audioBuffer.activeBuffer;  // 记住我们开始搜索的位置
         
-        // Try all buffers in a round-robin fashion starting from current activeBuffer
+        // 从当前activeBuffer开始，以循环方式尝试所有缓冲区
         for (int i = 0; i < NUM_BUFFERS; i++) {
             int bufferIndex = (startBuffer + i) % NUM_BUFFERS;
             
-            // Try to lock the buffer for writing (non-blocking)
+            // 尝试锁定缓冲区以进行写入（非阻塞）
             if (xSemaphoreTake(audioBuffer.mutex[bufferIndex], 0) == pdTRUE) {
-                // Check if buffer is not marked as ready (not waiting to be saved)
+                // 检查缓冲区是否未标记为就绪（不等待保存）
                 if (!audioBuffer.bufferReady[bufferIndex]) {
-                    // We found a usable buffer
+                    // 我们找到了一个可用的缓冲区
                     audioBuffer.activeBuffer = bufferIndex;
                     bufferFound = true;
                     
-                    // Calculate remaining space in this buffer
+                    // 计算此缓冲区中的剩余空间
                     uint8_t* bufPtr = audioBuffer.buffer[bufferIndex] + writePos;
                     size_t bytesToRead = audioBuffer.size - writePos;
                     
-                    // Read data from I2S directly into buffer
+                    // 从I2S直接读取数据到缓冲区
                     result = i2s_channel_read(rx_chan, bufPtr, bytesToRead, &bytes_read, portMAX_DELAY);
                     
-                    // Check if read was successful and data was received
+                    // 检查读取是否成功且接收到数据
                     if (result == ESP_OK && bytes_read > 0) {
-                        // Update write position
+                        // 更新写入位置
                         writePos += bytes_read;
                         
-                        // Check if buffer is full
+                        // 检查缓冲区是否已满
                         if (writePos >= audioBuffer.size) {
-                            // Reset write position for next buffer
+                            // 为下一个缓冲区重置写入位置
                             writePos = 0;
                             
-                            // Mark this buffer as ready
+                            // 标记此缓冲区为就绪
                             audioBuffer.bufferReady[bufferIndex] = true;
                             
-                            // Send buffer index to file task
+                            // 发送缓冲区索引到文件任务
                             xQueueSend(dataQueue, &bufferIndex, portMAX_DELAY);
                         }
                     } else if (result != ESP_OK) {
                         ESP_LOGW(TAG, "I2S read error: %s", esp_err_to_name(result));
                     }
                     
-                    // Release buffer mutex
+                    // 释放缓冲区互斥锁
                     xSemaphoreGive(audioBuffer.mutex[bufferIndex]);
-                    break;  // Exit the for loop since we processed data
+                    break;  // 既然已处理数据，退出for循环
                 } else {
-                    // Buffer is marked as ready but we got the mutex - release it and try another
+                    // 缓冲区标记为就绪但我们获得了互斥锁 - 释放它并尝试另一个
                     xSemaphoreGive(audioBuffer.mutex[bufferIndex]);
                 }
             }
-            // If we couldn't get the mutex or the buffer was ready, try the next one
+            // 如果我们无法获取互斥锁或缓冲区已就绪，尝试下一个
         }
         
-        // If no buffer was found, yield briefly before trying again
+        // 如果未找到缓冲区，短暂让出CPU再试
         if (!bufferFound) {
-            taskYIELD();  // Give other tasks a chance to run
+            taskYIELD();  // 让其他任务有机会运行
         }
     }
 }
 
-// File save task
+// 文件保存任务
 static void file_save_task(void *pvParameters) {
     ESP_LOGI(TAG, "File save task started");
     
-    // Generate unique filename
+    // 生成唯一文件名
     memset(currentFilePath, 0, sizeof(currentFilePath));
     if (generate_audio_filename(currentFilePath, sizeof(currentFilePath)) != ESP_OK) {
         ESP_LOGW(TAG, "Error generating filename, using fallback");
     }
     
-    // Create file
+    // 创建文件
     audioFile = fopen(currentFilePath, "wb");
-    setvbuf(audioFile, NULL, _IOFBF, 8192);  // Use fully buffered mode
+    setvbuf(audioFile, NULL, _IOFBF, 8192);  // 使用完全缓冲模式
     if (audioFile == NULL) {
         ESP_LOGE(TAG, "Failed to open file for writing: %s", currentFilePath);
         vTaskDelete(NULL);
@@ -188,26 +188,26 @@ static void file_save_task(void *pvParameters) {
     ESP_LOGI(TAG, "File opened: %s", currentFilePath);
     
     while (1) {
-        // Check if task should be suspended
+        // 检查任务是否应该暂停
         if (ulTaskNotifyTake(pdTRUE, 0)) {
-            // Flush any pending buffers
+            // 刷新任何待处理的缓冲区
             for (int i = 0; i < NUM_BUFFERS; i++) {
                 if (audioBuffer.bufferReady[i]) {
                     if (xSemaphoreTake(audioBuffer.mutex[i], portMAX_DELAY) == pdTRUE) {
-                        // Write buffer to file
+                        // 将缓冲区写入文件
                         size_t written = fwrite(audioBuffer.buffer[i], 1, audioBuffer.size, audioFile);
                         if (written != audioBuffer.size) {
                             ESP_LOGW(TAG, "Failed to write all data to file: %d/%d", written, audioBuffer.size);
                         }
                         
-                        // Mark buffer as available
+                        // 标记缓冲区为可用
                         audioBuffer.bufferReady[i] = false;
                         xSemaphoreGive(audioBuffer.mutex[i]);
                     }
                 }
             }
             
-            // Flush and close the file
+            // 刷新并关闭文件
             if (audioFile != NULL) {
                 fflush(audioFile);
                 fclose(audioFile);
@@ -215,14 +215,14 @@ static void file_save_task(void *pvParameters) {
                 ESP_LOGI(TAG, "File closed");
             }
             
-            // Suspend the task
+            // 暂停任务
             ESP_LOGI(TAG, "File save task going to suspend");
             vTaskSuspend(NULL);
             
-            // Create new file when resumed
+            // 恢复时创建新文件
             ESP_LOGI(TAG, "File save task resumed");
             
-            // Generate new unique filename
+            // 生成新的唯一文件名
             memset(currentFilePath, 0, sizeof(currentFilePath));
             if (generate_audio_filename(currentFilePath, sizeof(currentFilePath)) != ESP_OK) {
                 ESP_LOGW(TAG, "Error generating filename, using fallback");
@@ -239,18 +239,18 @@ static void file_save_task(void *pvParameters) {
             continue;
         }
         
-        // Receive buffer index from queue
+        // 从队列接收缓冲区索引
         uint8_t bufferIndex;
         if (xQueueReceive(dataQueue, &bufferIndex, portMAX_DELAY) == pdTRUE) {
             if (bufferIndex < NUM_BUFFERS && audioBuffer.bufferReady[bufferIndex]) {
                 if (xSemaphoreTake(audioBuffer.mutex[bufferIndex], portMAX_DELAY) == pdTRUE) {
-                    // Write buffer to file
+                    // 将缓冲区写入文件
                     size_t written = fwrite(audioBuffer.buffer[bufferIndex], 1, audioBuffer.size, audioFile);
                     if (written != audioBuffer.size) {
                         ESP_LOGW(TAG, "Failed to write all data to file: %d/%d", written, audioBuffer.size);
                     }
                     
-                    // Mark buffer as available again
+                    // 将缓冲区重新标记为可用
                     audioBuffer.bufferReady[bufferIndex] = false;
                     xSemaphoreGive(audioBuffer.mutex[bufferIndex]);
                 }
@@ -261,21 +261,21 @@ static void file_save_task(void *pvParameters) {
     }
 }
 
-// Initialize audio capture system
+// 初始化音频捕获系统
 static esp_err_t audio_capture_init(void) {
-    // Create data queue - increased size to accommodate more buffers
+    // 创建数据队列 - 增加大小以容纳更多缓冲区
     dataQueue = xQueueCreate(NUM_BUFFERS * 2, sizeof(uint8_t));
     if (dataQueue == NULL) {
         ESP_LOGE(TAG, "Failed to create data queue");
         return ESP_FAIL;
     }
     
-    // Allocate DMA-capable memory for buffers
+    // 为缓冲区分配DMA可用内存
     for (int i = 0; i < NUM_BUFFERS; i++) {
         audioBuffer.buffer[i] = heap_caps_malloc(AUDIO_BUFFER_SIZE, MALLOC_CAP_DMA);
         if (audioBuffer.buffer[i] == NULL) {
             ESP_LOGE(TAG, "Failed to allocate DMA buffer %d", i);
-            // Free previously allocated buffers
+            // 释放先前分配的缓冲区
             for (int j = 0; j < i; j++) {
                 heap_caps_free(audioBuffer.buffer[j]);
                 audioBuffer.buffer[j] = NULL;
@@ -285,14 +285,14 @@ static esp_err_t audio_capture_init(void) {
             return ESP_ERR_NO_MEM;
         }
         
-        // Clear buffer
+        // 清空缓冲区
         memset(audioBuffer.buffer[i], 0, AUDIO_BUFFER_SIZE);
         
-        // Create mutex for this buffer
+        // 为此缓冲区创建互斥锁
         audioBuffer.mutex[i] = xSemaphoreCreateMutex();
         if (audioBuffer.mutex[i] == NULL) {
             ESP_LOGE(TAG, "Failed to create mutex for buffer %d", i);
-            // Free resources
+            // 释放资源
             for (int j = 0; j <= i; j++) {
                 heap_caps_free(audioBuffer.buffer[j]);
                 audioBuffer.buffer[j] = NULL;
@@ -306,19 +306,19 @@ static esp_err_t audio_capture_init(void) {
             return ESP_ERR_NO_MEM;
         }
         
-        // Initialize buffer state
+        // 初始化缓冲区状态
         audioBuffer.bufferReady[i] = false;
     }
     
-    // Reset buffer state
+    // 重置缓冲区状态
     audioBuffer.activeBuffer = 0;
     
     return ESP_OK;
 }
 
-// Release all resources
+// 释放所有资源
 static void audio_capture_deinit(void) {
-    // Free buffer resources
+    // 释放缓冲区资源
     for (int i = 0; i < NUM_BUFFERS; i++) {
         if (audioBuffer.buffer[i] != NULL) {
             heap_caps_free(audioBuffer.buffer[i]);
@@ -331,44 +331,44 @@ static void audio_capture_deinit(void) {
         }
     }
     
-    // Delete queue
+    // 删除队列
     if (dataQueue != NULL) {
         vQueueDelete(dataQueue);
         dataQueue = NULL;
     }
     
-    // Close file if open
+    // 关闭文件（如果打开）
     if (audioFile != NULL) {
         fclose(audioFile);
         audioFile = NULL;
     }
 }
 
-// Start audio capture
+// 开始音频捕获
 esp_err_t audio_capture_start(void) {
     esp_err_t ret = ESP_OK;
     static bool resources_initialized = false;
     
-    // Check if tasks are already running
+    // 检查任务是否已经运行
     if (tasksRunning) {
-        // Check if tasks are suspended
+        // 检查任务是否已暂停
         if (audioTaskHandle != NULL && eTaskGetState(audioTaskHandle) == eSuspended) {
-            // Resume tasks
+            // 恢复任务
             vTaskResume(audioTaskHandle);
             vTaskResume(fileTaskHandle);
             ESP_LOGI(TAG, "Audio capture tasks resumed");
             return ESP_OK;
         } else {
-            // Tasks are already running
+            // 任务已经在运行
             ESP_LOGW(TAG, "Audio capture already running");
             return ESP_OK;
         }
     }
     
-    // Check for anomalous state where task handles exist but not marked as running
+    // 检查任务句柄存在但未标记为运行的异常状态
     if (audioTaskHandle != NULL || fileTaskHandle != NULL) {
         ESP_LOGW(TAG, "Task handles exist but not marked as running - cleaning up");
-        // Delete any existing tasks
+        // 删除任何现有任务
         if (audioTaskHandle != NULL) {
             vTaskDelete(audioTaskHandle);
             audioTaskHandle = NULL;
@@ -379,9 +379,9 @@ esp_err_t audio_capture_start(void) {
         }
     }
     
-    // Initialize resources only if not already done
+    // 仅在尚未完成的情况下初始化资源
     if (!resources_initialized) {
-        // Initialize resources
+        // 初始化资源
         ret = audio_capture_init();
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to initialize audio capture: %s", esp_err_to_name(ret));
@@ -389,7 +389,7 @@ esp_err_t audio_capture_start(void) {
             return ret;
         }
         
-        // Create audio capture task
+        // 创建音频捕获任务
         BaseType_t xReturned = xTaskCreatePinnedToCore(
             audio_capture_task,
             "audio_capture_task",
@@ -397,7 +397,7 @@ esp_err_t audio_capture_start(void) {
             NULL,
             AUDIO_TASK_PRIORITY,
             &audioTaskHandle,
-            0  // Core 0
+            0  // 核心0
         );
         
         if (xReturned != pdPASS) {
@@ -407,7 +407,7 @@ esp_err_t audio_capture_start(void) {
             return ESP_ERR_NO_MEM;
         }
         
-        // Create file save task
+        // 创建文件保存任务
         xReturned = xTaskCreatePinnedToCore(
             file_save_task,
             "file_save_task",
@@ -415,7 +415,7 @@ esp_err_t audio_capture_start(void) {
             NULL,
             FILE_TASK_PRIORITY,
             &fileTaskHandle,
-            1  // Core 1
+            1  // 核心1
         );
         
         if (xReturned != pdPASS) {
@@ -429,7 +429,7 @@ esp_err_t audio_capture_start(void) {
             return ESP_ERR_NO_MEM;
         }
         resources_initialized = true;
-        // Mark tasks as running
+        // 标记任务为运行状态
         tasksRunning = true;
         ESP_LOGI(TAG, "Audio capture started");
         return ESP_OK;
@@ -437,29 +437,29 @@ esp_err_t audio_capture_start(void) {
     return ESP_OK;
 }
 
-// Stop audio capture
+// 停止音频捕获
 esp_err_t audio_capture_stop(void) {
-    // Check if tasks are running
+    // 检查任务是否正在运行
     if (!tasksRunning) {
         ESP_LOGW(TAG, "Audio capture not running");
         return ESP_OK;
     }
     
-    // Check if tasks exist
+    // 检查任务是否存在
     if (audioTaskHandle == NULL || fileTaskHandle == NULL) {
         ESP_LOGW(TAG, "Audio capture tasks not found");
         tasksRunning = false;
         return ESP_OK;
     }
     
-    // Notify tasks to suspend
+    // 通知任务暂停
     xTaskNotifyGive(audioTaskHandle);
     xTaskNotifyGive(fileTaskHandle);
     
-    // Wait for tasks to suspend
+    // 等待任务暂停
     vTaskDelay(pdMS_TO_TICKS(1000));
     
-    // Confirm tasks are suspended
+    // 确认任务已暂停
     if (eTaskGetState(audioTaskHandle) != eSuspended || 
         eTaskGetState(fileTaskHandle) != eSuspended) {
         ESP_LOGW(TAG, "Failed to suspend tasks");
@@ -470,7 +470,7 @@ esp_err_t audio_capture_stop(void) {
     return ESP_OK;
 }
 
-// Check if audio capture is running
+// 检查音频捕获是否正在运行
 bool audio_capture_is_running(void) {
     return tasksRunning && 
            audioTaskHandle != NULL && 
