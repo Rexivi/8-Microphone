@@ -7,7 +7,7 @@ static TaskHandle_t audioTaskHandle = NULL;
 static TaskHandle_t fileTaskHandle = NULL;
 
 // 音频数据的N缓冲区系统（替代双缓冲区）
-#define NUM_BUFFERS 7  // 缓冲区数量(N) - 可调整
+#define NUM_BUFFERS 6  // 缓冲区数量(N) - 可调整
 
 typedef struct {
     SemaphoreHandle_t mutex[NUM_BUFFERS];
@@ -159,9 +159,9 @@ static void audio_capture_task(void *pvParameters) {
         }
         
         // 如果未找到缓冲区，短暂让出CPU再试
-        if (!bufferFound) {
-            taskYIELD();  // 让其他任务有机会运行
-        }
+        // if (!bufferFound) {
+        //     taskYIELD();  // 让其他任务有机会运行
+        // }
     }
 }
 
@@ -397,7 +397,7 @@ esp_err_t audio_capture_start(void) {
             NULL,
             AUDIO_TASK_PRIORITY,
             &audioTaskHandle,
-            0  // 核心0
+            1  // 核心0
         );
         
         if (xReturned != pdPASS) {
@@ -415,7 +415,7 @@ esp_err_t audio_capture_start(void) {
             NULL,
             FILE_TASK_PRIORITY,
             &fileTaskHandle,
-            1  // 核心1
+            0  // 核心1
         );
         
         if (xReturned != pdPASS) {

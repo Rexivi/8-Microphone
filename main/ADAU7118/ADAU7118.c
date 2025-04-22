@@ -135,7 +135,7 @@ esp_err_t Init_ADAU7118() {
     }
     
     // 4. 设置抽取比率和PDM时钟映射
-    ret = adau7118_write_reg(0x05, 0b11000000);
+    ret = adau7118_write_reg(0x05, 0b11000001);
     if (ret != ESP_OK) return ret;
     vTaskDelay(5 / portTICK_PERIOD_MS);
     ret = adau7118_read_reg(0x05, &read_data);
